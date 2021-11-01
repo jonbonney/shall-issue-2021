@@ -1,0 +1,261 @@
+---
+title: "Effects of Concealed-Carry Laws on Crime Rates"
+author: "Jonathan Bonney"
+date: "October 2021"
+output: 
+  html_document:
+    code_folding: hide
+    code_download: true
+---
+
+This is a dynamic document which provides reproduction code and further visualizations not found in the final paper. The R Markdown source file for this document can be downloaded by clicking the "Code" dropdown menu in the uppermost right hand corner of the document and selecting "Download Rmd". Each block of code for the associated visualization can be viewed or hidden by clicking the appropriate "Code" button.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+# load libraries and data
+library(tidyverse)
+library(haven)
+library(dplyr)
+# library(ggplot2)
+library(plotly)
+library(stargazer)
+library(knitr)
+guns_df <- read_dta("Guns.dta")
+```
+
+## Data Management
+To facilitate easier coding later on, some basic changes were made to the data set.
+
+- Added natural log columns for the various crime rates
+- Changed year to include full year, not just the last two digits
+- Grouped data set into three groups based on whether or not the state had a shall-issue law in place:
+  - Group 1: states that had shall-issue law during the entire data set
+  - Group 2: states that never had shall-issue law during the entire data set
+  - Group 3: states that started without a shall-issue law but enacted one during the data set
+  
+The first ten rows of the resulting data set are as follows:
+
+```{r data_management}
+# DATA MANAGEMENT
+
+# create natural log columns and write out full years
+guns_df <- guns_df %>% 
+  mutate(
+    lnvio = log(vio),
+    lnmur = log(mur),
+    lnrob = log(rob),
+    year = year + 1900
+  ) 
+
+# create groups based on shall-issue laws
+# group 0: uncategorized states. no observation should be assigned group 0 by the end
+# group 1: states that had shall-issue law during the entire data set
+# group 2: states that never had shall-issue law during the entire data set
+# group 3: states that started without a shall-issue law but enacted one during the data set
+guns_df <- guns_df %>% mutate(group=0)
+for(i in 1:nrow(guns_df)) {
+  # checks if this observation has not been grouped yet
+  if (guns_df$group[i]==0) {
+    # if they do not have one already, we will first assume that the state 
+    # will not enact a shall-issue and therefore assign group 2 to every 
+    # observation of that state
+    if (guns_df$shall[i]==0) {
+      for(j in 1:nrow(guns_df)) {
+        if (guns_df$stateid[j]==guns_df$stateid[i]) {
+          guns_df$group[j] <- 2
+        }
+      }
+    # we know that no state abolished a shall-issue law during this data set
+    # so if it hasn't been categorized yet and has a shall-issue law,
+    # we assign group 3 to ever observation of that state
+    } else if(guns_df$shall[i]==1) {
+      for(j in 1:nrow(guns_df)) {
+        if (guns_df$stateid[j]==guns_df$stateid[i]) {
+          guns_df$group[j] <- 1
+        }
+      }
+    }
+  # checks if this observation has already been grouped
+  } else if (!guns_df$group[i]==0) {
+    # if the state was previously assigned to group 2, but has now enacted a shall-issue law
+    # we will assign it to group 3
+    if (guns_df$group[i]==2 & guns_df$shall[i]==1) {
+      for(j in 1:nrow(guns_df)) {
+        if (guns_df$stateid[j]==guns_df$stateid[i]) {
+          guns_df$group[j] <- 3
+        }
+      }
+    }
+  }
+}
+guns_df <- guns_df %>% mutate(group = as_factor(group))
+
+kable(guns_df[1:10,])
+```
+
+## Dynamic 3D Visualization
+In order to view each state individually graphed across time, I graphed the data in three dimensions separating by State ID (*stateid*) on the x axis. This graph can be zoomed, rotated, and panned to visually inspect patterns in the data.
+
+``` {r vizualization1}
+# VIZUALIZATION 1
+
+df <- guns_df #%>% filter(group==3) # Uncomment to only graph group 3
+viz1 <- plot_ly(
+  x=df$stateid, 
+  y=df$year, 
+  z=df$lnvio, 
+  type="scatter3d", 
+  mode="markers", 
+  color=df$stateid,
+)
+viz1 <- viz1 %>% layout(scene = list(
+  xaxis = list(title = 'State ID'),
+  yaxis = list(title = 'Year'),
+  zaxis = list(title = 'Rate of Violence')
+  )
+)
+viz1
+
+```
+
+## Grouped Visualizations
+Grouping the shall-issue and non shall-issue states together allowed me to graph them over time and get a better idea of how correlated the groups were. The high correlation indicates that there are other factors affecting crime on a national level, but I also notice that Group 3 does appear to get closer to Group 2 and further from Group 1 as more of the states enact shall-issue laws.
+
+```{r vizualization2}
+# VIZUALIZATION 2
+
+# Graph change in violence over time, grouped by preponderance of shall-issue laws
+# Split data frame into groups
+df <- aggregate(lnvio~group+year,data=guns_df,FUN=mean)
+viz2 <-
+  # Set base properties of the graph
+  ggplot(
+    data=df,
+    aes(x=year, y=lnvio)
+  ) +
+  # Graph line for group 1
+  geom_line(
+    data=filter(df,group==1),
+    aes(color=group) 
+  ) +
+  # Graph line for group 2
+  geom_line(
+    data=filter(df,group==2),
+    aes(color=group) 
+  ) +
+  # Graph line for group 3
+  geom_line(
+    data=filter(df,group==3),
+    aes(color=group) 
+  ) +
+  # Label things
+  labs(
+    title = "Change in Violence over Time",
+    subtitle = "Grouped by Preponderance of Shall-Issue Laws",
+    x = "Year",
+    y = "Rate of Violence (as natural log)",
+    
+    caption = "Group 1: states that had a shall-issue law during the entire data set
+Group 2: states that never had a shall-issue law during the entire data set
+Group 3: states that started without a shall-issue law but enacted one during the data set"
+  ) +
+  theme(
+    plot.caption = element_text(hjust = 0) # Align caption to the left, instead of the default right alignment
+  )
+viz2
+```
+
+``` {r vizualization3}
+# VIZUALIZATION 3
+
+# Graph change in violence over time, grouped by preponderance of shall-issue laws
+# Split data frame into groups
+df <- aggregate(lnvio~group+year,data=guns_df,FUN=mean)
+viz3 <-
+  # Set base properties of the graph
+  ggplot(
+    data=df,
+    aes(x=year, y=lnvio)
+  ) +
+  # Graph data points and color them by group
+  geom_point(
+    data=guns_df,
+    aes(color=group), 
+    alpha = 0.5
+  ) +
+  # Graph line for group 1
+  geom_line(
+    data=filter(df,group==1),
+    aes(color=group) 
+  ) +
+  # Graph line for group 2
+  geom_line(
+    data=filter(df,group==2),
+    aes(color=group) 
+  ) +
+  # Graph line for group 3
+  geom_line(
+    data=filter(df,group==3),
+    aes(color=group) 
+  ) +
+  # Label things
+  labs(
+    title = "Change in Violence over Time",
+    subtitle = "Grouped by Preponderance of Shall-Issue Laws",
+    x = "Year",
+    y = "Rate of Violence (as natural log)",
+    
+    caption = "Group 1: states that had a shall-issue law during the entire data set
+Group 2: states that never had a shall-issue law during the entire data set
+Group 3: states that started without a shall-issue law but enacted one during the data set"
+  ) +
+  theme(
+    plot.caption = element_text(hjust = 0) # Align caption to the left, instead of the default right alignment
+  )
+viz3
+```
+
+## Regressions
+I do not find visual representations of a binary variable to be very helpful, so I did not include them in the paper. Nonetheless, here they are.
+
+```{r regression1}
+# Basic black and white visualization
+reg1 <- lm(lnvio~shall, data=guns_df)
+plot(
+  x = guns_df$shall, 
+  y = guns_df$lnvio,
+  xlab = "Shall-Issue",
+  ylab = "Rate of Violence (as Natural Log)",
+  main = "Correlation between Shall-Issue laws and Violence"
+) + 
+abline(reg1)
+
+# Prettier visualization
+# Set base properties of the graph
+ggplot(
+  data=guns_df,
+  aes(x=shall, y=lnvio)
+) +
+# Graph points
+geom_point(
+  data=guns_df,
+  aes(color=group), 
+  alpha = 0.5
+) +
+# Graph linear model regression line
+geom_smooth(
+  method = "lm",
+  color="black"
+) +
+# Label things
+labs (
+  title = "Correlation between Shall-Issue and Violence",
+  x = "Shall-Issue",
+  y = "Rate of Violence (as Natural Log)"
+)
+```
+
+
